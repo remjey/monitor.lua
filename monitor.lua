@@ -31,7 +31,7 @@ while #arg > 0 do
   elseif a == "-all" then show_all = true
   elseif a == "-v" then verbose = true
   elseif a == "-json" then show_json = true
-  elseif a == "-h" then print(table.concat{ arg[0], " [-c config_file] { -batch | [-all] [-json] }" })
+  elseif a == "-h" then print(table.concat{ arg[0], " [-v] [-c config_file] { -batch | [-all] [-json] }" })
   else error("invalid argument: " .. tostring(a))
   end
 end

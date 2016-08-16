@@ -7,7 +7,7 @@ return {
     "google.com", "free.fr", "facebook.com", "microsoft.com",
   },
   states_filename = nil, -- use default ~/.local/monitor.lua.state
-  remind_period = nil, -- use default (8 hours)
+  remind_period = nil, -- when a test consistently fails, remind the failure after this period in seconds (default 8 hours)
   monitor = {
     -- This is a connect test. The script will connect to the specified host:port
     -- It will then send the content of the `send` entry if not empty

@@ -8,39 +8,71 @@ local http = require"socket.http"
 local https = require"ssl.https"
 local mime = require"mime"
 
-local conf = loadfile(os.getenv("HOME") .. "/.config/monitor.lua")()
-local states_filename = conf.states_filename or (os.getenv("HOME") .. "/.local/monitor.lua.state")
+local conf_filename = os.getenv("HOME") .. "/.config/monitor.config.lua"
+
+local batch = false
+local show_all = false
+local show_json = false
+
+while #arg > 0 do
+  local a = table.remove(arg, 1)
+  if a == "-batch" then batch = true
+  elseif a == "-c" then conf_filename = table.remove(arg, 1)
+  elseif a == "-all" then show_all = true
+  elseif a == "-json" then show_json = true
+  elseif a == "-h" then print(table.concat{ arg[0], " [-c config_file] { -batch | [-all] [-json] }" })
+  else error("invalid argument: " .. tostring(a))
+  end
+end
+
+local conf = loadfile(conf_filename)()
+if not conf then error("could not load configuration file: " .. tostring(conf_filename)) end
+
+local states_filename = conf.states_filename or (os.getenv("HOME") .. "/.local/monitor.state.lua")
 local states = (loadfile(states_filename) or function () return {} end)()
 
-if arg[1] == nil or arg[1] == "-all" then
-  for test_id, state in pairs(states) do
-    if not state.online or arg[1] == "-all" then
-      io.write("Test ID:      ", test_id, "\n")
-      io.write("Last attempt: ", os.date("%c", state.last_attempt), "\n")
-      io.write("Test result:  ", state.online and "ok" or "failed", "\n")
-      if #state.reports > 0 then
-        io.write("Lastest reports:\n")
-        local start = math.max(1, #state.reports - 2)
-        for i = #state.reports, start, -1 do
-          local r = state.reports[i]
-          io.write("  Time:    ", os.date("%c", r.time), "\n")
-          io.write("  Result:  ", r.online and "ok" or "failed", "\n")
-          io.write("  Message: ", r.short, "\n\n")
+if not batch then
+  if show_json then
+    local r
+    if show_all then
+      r = states
+    else
+      r = {}
+      for test_id, state in pairs(states) do
+        if not state.online then r[test_id] = state end
+      end
+    end
+    io.write(require"cjson".encode(r))
+  else
+    for test_id, state in pairs(states) do
+      if not state.online or show_all then
+        io.write("Test ID:      ", test_id, "\n")
+        io.write("Last attempt: ", os.date("%c", state.last_attempt), "\n")
+        io.write("Test result:  ", state.online and "ok" or "failed", "\n")
+        if #state.reports > 0 then
+          io.write("Lastest reports:\n")
+          local start = math.max(1, #state.reports - 2)
+          for i = #state.reports, start, -1 do
+            local r = state.reports[i]
+            io.write("  Time:    ", os.date("%c", r.time), "\n")
+            io.write("  Result:  ", r.online and "ok" or "failed", "\n")
+            io.write("  Message: ", r.short, "\n\n")
+          end
+        else
+          io.write("\n")
         end
-      else
-        io.write("\n")
       end
     end
   end
   os.exit(0)
-elseif arg[1] ~= "-batch" then
-  error("Use argument -batch to test all sites")
 end
 
 -- Check that internet works using a few different sites
 
 local working_count = 0
+local tested = 0
 for _, site in ipairs(conf.test_connection_with_hosts) do
+  tested = tested + 1
   local url = "http://" .. site .. "/"
   local r, s, rh = http.request(url)
   if r and s == 200 then
@@ -49,7 +81,7 @@ for _, site in ipairs(conf.test_connection_with_hosts) do
   end
 end
 
-if working_count < 1 then
+if working_count < 1 and tested > 0 then
   -- We’re not sure we are really connected, so let’s quit
   os.exit(1)
 end

@@ -7,6 +7,16 @@ socket.url = require"socket.url"
 local http = require"socket.http"
 local https = require"ssl.https"
 local mime = require"mime"
+local serpent = require"serpent"
+local cjson = require"cjson"
+
+local verbose = false
+function log(...)
+  if verbose then
+    io.write(...)
+    io.write("\n")
+  end
+end
 
 local conf_filename = os.getenv("HOME") .. "/.config/monitor.config.lua"
 
@@ -19,19 +29,23 @@ while #arg > 0 do
   if a == "-batch" then batch = true
   elseif a == "-c" then conf_filename = table.remove(arg, 1)
   elseif a == "-all" then show_all = true
+  elseif a == "-v" then verbose = true
   elseif a == "-json" then show_json = true
   elseif a == "-h" then print(table.concat{ arg[0], " [-c config_file] { -batch | [-all] [-json] }" })
   else error("invalid argument: " .. tostring(a))
   end
 end
 
+log("Loading config: ", conf_filename)
 local conf = loadfile(conf_filename)()
 if not conf then error("could not load configuration file: " .. tostring(conf_filename)) end
 
 local states_filename = conf.states_filename or (os.getenv("HOME") .. "/.local/monitor.state.lua")
+log("Loading states file: ", states_filename)
 local states = (loadfile(states_filename) or function () return {} end)()
 
 if not batch then
+  log("Showing states")
   if show_json then
     local r
     if show_all then
@@ -42,7 +56,7 @@ if not batch then
         if not state.online then r[test_id] = state end
       end
     end
-    io.write(require"cjson".encode(r))
+    io.write(cjson.encode(r))
   else
     for test_id, state in pairs(states) do
       if not state.online or show_all then
@@ -67,22 +81,27 @@ if not batch then
   os.exit(0)
 end
 
+log("Testing connection")
+
 -- Check that internet works using a few different sites
 
 local working_count = 0
 local tested = 0
 for _, site in ipairs(conf.test_connection_with_hosts) do
   tested = tested + 1
+  log("Testing site: ", site)
   local url = "http://" .. site .. "/"
   local r, s, rh = http.request(url)
   if r and s == 200 then
+    log("Working")
     working_count = working_count + 1
     if working_count >= 2 then break end
   end
 end
 
-if working_count < 1 and tested > 0 then
+if working_count < 2 and tested > 0 then
   -- We’re not sure we are really connected, so let’s quit
+  log("Connection test failed")
   os.exit(1)
 end
 
@@ -94,6 +113,7 @@ end
 local tests = {}
 
 function check_content(item, value)
+  log("Checking content")
   if type(value) ~= "string" or type(item.match_response) ~= "string" then return false end
   return value:find(item.match_response) ~= nil
 end
@@ -106,6 +126,7 @@ function tests.connect(item)
 
   local s = socket.tcp()
   s:settimeout(item.timeout or 10)
+  log"Connecting"
   local ok, err = s:connect(item.host, item.port)
   if not ok then
     report.short = table.concat{ "connect to ", item.host, ":", item.port, " failed" }
@@ -113,6 +134,7 @@ function tests.connect(item)
   end
 
   if item.send then
+    log"Sending probe data"
     local ok, err = s:send(item.send)
     if not ok then
       report.short = table.concat{ "send to ", item.host, ":", item.port, " failed" }
@@ -121,6 +143,7 @@ function tests.connect(item)
   end
 
   if item.match_response then
+    log"Reading data from server"
     local s, err = s:receive("*l")
     if not s then
       report.short = table.concat{ "receive from ", item.host, ":", item.port, " failed" }
@@ -187,6 +210,8 @@ function tests.http(item)
   return report
 end
 
+log("Running tests")
+
 local reports = {}
 local test_id_dups = {}
 
@@ -194,12 +219,15 @@ for _, test in ipairs(conf.monitor) do
   if not tests[test.type] then
     error("invalid test type: " .. test.type)
   end
+  log("Test type: ", test.type)
 
   local now = os.time()
   local report = tests[test.type](test)
   if test_id_dups[report.test_id] then
     error("duplicate test id: " .. report.test_id)
   end
+  log("Test ID: ", report.test_id)
+  log("Test result: ", report.online and "ok" or "failed")
   test_id_dups[report.test_id] = true
   report.time = now
 
@@ -223,8 +251,9 @@ for _, test in ipairs(conf.monitor) do
   end
 end
 
+log("Writing states")
 local states_file = io.open(states_filename, "w")
-states_file:write(require"serpent".dump(states))
+states_file:write(serpent.dump(states))
 states_file:close()
 
 local reporters = {}
@@ -259,16 +288,19 @@ function reporters.http(item, text)
     req.url = item.url:gsub(":(%w+)", function (_, k) return socket.url.escape(params[k]) end)
     local source_data
     if item.encoding == "json" then
-      source_data = require"cjson".encode(params)
+      source_data = cjson.encode(params)
       req.headers["Content-Type"] = "application/json"
     else
       source_data = form_encode(params)
       req.headers["Content-Type"] = "application/x-www-form-urlencoded"
     end
+    req.headers["Content-Length"] = #source_data
     req.source = coroutine.wrap(function ()
+      log("Sending request body: ", source_data)
       coroutine.yield(source_data)
     end)
   end
+  if verbose then log("Sending request: ", serpent.block(req)) end
   httpqs(req.url).request(req)
 end
 
@@ -276,9 +308,14 @@ function reporters.console(item, text)
   print(text)
 end
 
+log("Reporting")
+
 for _, r in ipairs(reports) do
+  log("Report: ", r.short)
   for _, rpt in ipairs(conf.report) do
+    log("Using method: ", rpt.type)
     if reporters[rpt.type] then reporters[rpt.type](rpt, r.short) end
   end
 end
 
+log("Done")

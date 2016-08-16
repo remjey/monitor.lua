@@ -18,7 +18,7 @@ return {
       type = "connect",
       host = "example.com",
       port = 22,
-      match_response = "^SSH-", -- optional
+      match_response = "^SSH%-", -- optional, is a lua regex
     },
     {
       -- Check an HTTP response status
@@ -53,7 +53,7 @@ return {
         pass = "password",
       },
       -- In POST mode, the (default) `form` encoding will encode the data as
-      -- application/x-www-form-urlencoded, and `json` will encode in json.
+      -- application/x-www-form-urlencoded, and `json` will encode in application/json.
       encoding= "form",
     },
     {

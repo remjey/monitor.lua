@@ -197,27 +197,47 @@ states_file:close()
 
 local reporters = {}
 
-function reporters.http(item, text)
-  assert(item.method == "GET", "http reporter, only get method implemented")
-  assert(item.report_mode == "short", "http reporter, only short report_mode implemented")
+local function form_encode(t)
+  local r = {}
+  for key, value in pairs(t) do
+    if #r > 0 then r[#r + 1] = "&" end
+    r[#r + 1] = socket.url.escape(key)
+    r[#r + 1] = "="
+    r[#r + 1] = socket.url.escape(value)
+  end
+  return table.concat(r)
+end
 
+function reporters.http(item, text)
+  assert(item.method == "GET" or item.method == "POST", "http reporter, only GET and POST method implemented")
+  assert(item.report_mode == "short", "http reporter, only short report_mode implemented")
+  assert(item.method == "GET" or item.encoding == "form" or item.encoding == "json", "http reporter, only form or json are supported encodings for POST method")
+
+  local req = {
+    method = item.method,
+    headers = {},
+  }
   local params = {}
   for key, value in pairs(item.other_params) do params[key] = value end
   params[item.report_param] = (item.report_prefix or "") .. text
 
-  local data = {}
-  for key, value in pairs(params) do
-    if #data > 2 then data[#data + 1] = "&" end
-    data[#data + 1] = socket.url.escape(key)
-    data[#data + 1] = "="
-    data[#data + 1] = socket.url.escape(value)
+  if item.method == "GET" then
+    req.url = table.concat{ item.url, "?", form_encode(params) }
+  else
+    req.url = item.url:gsub(":(%w+)", function (_, k) return socket.url.escape(params[k]) end)
+    local source_data
+    if item.encoding == "json" then
+      source_data = require"cjson".encode(params)
+      req.headers["Content-Type"] = "application/json"
+    else
+      source_data = form_encode(params)
+      req.headers["Content-Type"] = "application/x-www-form-urlencoded"
+    end
+    req.source = coroutine.wrap(function ()
+      coroutine.yield(source_data)
+    end)
   end
-
-  local url = table.concat{ item.url, "?", table.concat(data) }
-  local r, s = httpqs(url).request{
-    url = url,
-    method = item.method,
-  }
+  httpqs(req.url).request(req)
 end
 
 function reporters.console(item, text)

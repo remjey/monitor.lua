@@ -8,13 +8,15 @@ Run this script with the `-batch` option to run the tests (in a cron for example
 
 ## Arguments
 
-`./monitor.lua [-v] [-c config_file] { -batch | [-all] [-json] }`
+`./monitor.lua [-v] [-c config_file] { -batch [-console-report] | [-all] [-json] | -test-reporters }`
 
 Without any option, the command will display currently failing tests.
 
 * `-c config_file` use a specific configuration file, instead of the default `~/.config/monitor.config.lua`
 * `-batch` runs the tests, it is meant to be used in the cron command
+* `-console-report` overrides configured reporters and only reports to console for this run
 * `-all` display all tests states, even tests that are ok
 * `-json` output the tests states as a serialized json map
 * `-v` verbose mode, script says what it’s doing
+* `-test-reporters` sends a test message to all configured reporters
 

@@ -10,99 +10,16 @@ local mime = require"mime"
 local serpent = require"serpent"
 local cjson = require"cjson"
 
+--[[***************]]--
+--[[** Functions **]]--
+--[[***************]]--
+
 local verbose = false
 function log(...)
   if verbose then
     io.write(...)
     io.write("\n")
   end
-end
-
-local conf_filename = os.getenv("HOME") .. "/.config/monitor.config.lua"
-
-local batch = false
-local show_all = false
-local show_json = false
-
-while #arg > 0 do
-  local a = table.remove(arg, 1)
-  if a == "-batch" then batch = true
-  elseif a == "-c" then conf_filename = table.remove(arg, 1)
-  elseif a == "-all" then show_all = true
-  elseif a == "-v" then verbose = true
-  elseif a == "-json" then show_json = true
-  elseif a == "-h" then print(table.concat{ arg[0], " [-v] [-c config_file] { -batch | [-all] [-json] }" })
-  else error("invalid argument: " .. tostring(a))
-  end
-end
-
-log("Loading config: ", conf_filename)
-local conf = loadfile(conf_filename)()
-if not conf then error("could not load configuration file: " .. tostring(conf_filename)) end
-
-local states_filename = conf.states_filename or (os.getenv("HOME") .. "/.local/monitor.state.lua")
-log("Loading states file: ", states_filename)
-local states = (loadfile(states_filename) or function () return {} end)()
-
-if not batch then
-  log("Showing states")
-  if show_json then
-    local r
-    if show_all then
-      r = states
-    else
-      r = {}
-      for test_id, state in pairs(states) do
-        if not state.online then r[test_id] = state end
-      end
-    end
-    io.write(cjson.encode(r))
-  else
-    for test_id, state in pairs(states) do
-      if not state.online or show_all then
-        io.write("Test ID:      ", test_id, "\n")
-        io.write("Last attempt: ", os.date("%c", state.last_attempt), "\n")
-        io.write("Test result:  ", state.online and "ok" or "failed", "\n")
-        if #state.reports > 0 then
-          io.write("Lastest reports:\n")
-          local start = math.max(1, #state.reports - 2)
-          for i = #state.reports, start, -1 do
-            local r = state.reports[i]
-            io.write("  Time:    ", os.date("%c", r.time), "\n")
-            io.write("  Result:  ", r.online and "ok" or "failed", "\n")
-            io.write("  Message: ", r.short, "\n\n")
-          end
-        else
-          io.write("\n")
-        end
-      end
-    end
-  end
-  os.exit(0)
-end
-
-log("Testing connection")
-
--- Check that internet works using a few different sites
-
-local working_count = 0
-local tested = 0
-for _, site in ipairs(conf.test_connection_with_hosts) do
-  tested = tested + 1
-  log("Testing site: ", site)
-  local url = "http://" .. site .. "/"
-  local r, s, rh = http.request(url)
-  if r and s == 200 then
-    log("Working")
-    working_count = working_count + 1
-    if working_count >= 2 then break end
-  end
-end
-
-if working_count < 2 and tested > 0 then
-  -- We’re not sure we are really connected, so let’s quit
-  log("Connection test failed")
-  os.exit(1)
 end
 
 function httpqs(url)
@@ -210,52 +127,6 @@ function tests.http(item)
   return report
 end
 
-log("Running tests")
-
-local reports = {}
-local test_id_dups = {}
-
-for _, test in ipairs(conf.monitor) do
-  if not tests[test.type] then
-    error("invalid test type: " .. test.type)
-  end
-  log("Test type: ", test.type)
-
-  local now = os.time()
-  local report = tests[test.type](test)
-  if test_id_dups[report.test_id] then
-    error("duplicate test id: " .. report.test_id)
-  end
-  log("Test ID: ", report.test_id)
-  log("Test result: ", report.online and "ok" or "failed")
-  test_id_dups[report.test_id] = true
-  report.time = now
-
-  local state = states[report.test_id] or { online = true, reports = {} }
-  if not states[report.test_id] then states[report.test_id] = state end
-  state.last_attempt = now
-
-  if not report.online then
-    if state.online or os.difftime(now, state.last_report) >= (conf.remind_period or 28000) then
-      state.online = false
-      table.insert(state.reports, report)
-      table.insert(reports, report)
-      state.last_report = now
-    end
-  else
-    if not state.online then
-      state.online = true
-      table.insert(state.reports, report)
-      table.insert(reports, report)
-    end
-  end
-end
-
-log("Writing states")
-local states_file = io.open(states_filename, "w")
-states_file:write(serpent.dump(states))
-states_file:close()
-
 local reporters = {}
 
 local function form_encode(t)
@@ -308,7 +179,179 @@ function reporters.console(item, text)
   print(text)
 end
 
+--[[*******************]]--
+--[[** Program Start **]]--
+--[[*******************]]--
+
+local conf_filename = os.getenv("HOME") .. "/.config/monitor.config.lua"
+
+local test_report = false
+local console_report = false
+local batch = false
+local show_all = false
+local show_json = false
+
+while #arg > 0 do
+  local a = table.remove(arg, 1)
+  if a == "-batch" then batch = true
+  elseif a == "-console-report" then console_report = true
+  elseif a == "-test-reporters" then test_report = true
+  elseif a == "-c" then conf_filename = table.remove(arg, 1)
+  elseif a == "-all" then show_all = true
+  elseif a == "-v" then verbose = true
+  elseif a == "-json" then show_json = true
+  elseif a == "-h" then print(table.concat{ arg[0], " [-v] [-c config_file] { -batch [-console-report] | [-all] [-json] | -test-reporters}" })
+  else error("invalid argument: " .. tostring(a))
+  end
+end
+
+log("Loading config: ", conf_filename)
+local conf = loadfile(conf_filename)()
+if not conf then error("could not load configuration file: " .. tostring(conf_filename)) end
+
+local states_filename = conf.states_filename or (os.getenv("HOME") .. "/.local/monitor.state.lua")
+log("Loading states file: ", states_filename)
+local states = (loadfile(states_filename) or function () return {} end)()
+
+if test_report then
+  print"Testing reporters"
+  local msg = "This is a test report created " .. os.date()
+  for _, rpt in ipairs(conf.report) do
+    print("- " .. rpt.type)
+    if reporters[rpt.type] then reporters[rpt.type](rpt, msg .. " to test the " .. rpt.type .. " reporter.") end
+  end
+  os.exit(0)
+end
+
+if not batch then
+  log("Showing states")
+  if show_json then
+    local r
+    if show_all then
+      r = states
+    else
+      r = {}
+      for test_id, state in pairs(states) do
+        if not state.online then r[test_id] = state end
+      end
+    end
+    io.write(cjson.encode(r))
+  else
+    for test_id, state in pairs(states) do
+      if not state.online or state.consecutive_failures > 0 or show_all then
+        io.write("Test ID:              ", test_id, "\n")
+        io.write("Last attempt:         ", os.date("%c", state.last_attempt), "\n")
+        io.write("Current status:       ", state.online and "ok" or "failed", "\n")
+        if state.consecutive_failures > 0 then
+          io.write("Consecutive failures: ", state.consecutive_failures, "\n")
+        end
+        if #state.reports > 0 then
+          io.write("Lastest reports:\n")
+          local start = math.max(1, #state.reports - 2)
+          for i = #state.reports, start, -1 do
+            local r = state.reports[i]
+            io.write("  Time:    ", os.date("%c", r.time), "\n")
+            io.write("  Result:  ", r.online and "ok" or "failed", "\n")
+            if r.trigger then
+              io.write("  Message: ", r.short, "\n")
+            else
+              io.write"  This report was not sent: insufficient consecutive failures count.\n"
+            end
+            io.write"\n"
+          end
+        else
+          io.write"\n"
+        end
+      end
+    end
+  end
+  os.exit(0)
+end
+
+log("Testing connection")
+
+-- Check that internet works using a few different sites
+
+local working_count = 0
+local tested = 0
+for _, site in ipairs(conf.test_connection_with_hosts) do
+  tested = tested + 1
+  log("Testing site: ", site)
+  local r, s, rh = http.request(site)
+  if r and (s < 400) then
+    log("Working")
+    working_count = working_count + 1
+    if working_count >= 2 then break end
+  end
+end
+
+if working_count < 2 and tested > 0 then
+  -- We’re not sure we are really connected, so let’s quit
+  log("Connection test failed")
+  os.exit(1)
+end
+
+log("Running tests")
+
+local reports = {}
+local test_id_dups = {}
+
+for _, test in ipairs(conf.monitor) do
+  if not tests[test.type] then
+    error("invalid test type: " .. test.type)
+  end
+
+  local now = os.time()
+  local report = tests[test.type](test)
+  if test_id_dups[report.test_id] then
+    error("duplicate test id: " .. report.test_id)
+  end
+  log("Test ID: ", report.test_id)
+  log("Test type: ", test.type)
+  log("Test result: ", report.online and "ok" or "failed")
+  test_id_dups[report.test_id] = true
+  report.time = now
+  report.trigger = false
+
+  local state = states[report.test_id] or { online = true, reports = {}, consecutive_failures = 0 }
+  if not states[report.test_id] then states[report.test_id] = state end
+  state.last_attempt = now
+
+  if not report.online then
+    if state.online or os.difftime(now, state.last_report) >= (conf.remind_period or 28000) then
+      state.consecutive_failures = state.consecutive_failures + 1
+      if state.consecutive_failures >= (test.consecutive_failures_threshold or 1) then
+        state.online = false
+        table.insert(reports, report)
+        report.trigger = true
+      end
+      table.insert(state.reports, report)
+      state.last_report = now
+    end
+  else
+    if not state.online or state.consecutive_failures > 0 then
+      state.consecutive_failures = 0
+      if not state.online then
+        state.online = true
+        table.insert(reports, report)
+        report.trigger = true
+      end
+      table.insert(state.reports, report)
+    end
+  end
+end
+
+log("Writing states")
+local states_file = io.open(states_filename, "w")
+states_file:write(serpent.dump(states))
+states_file:close()
+
 log("Reporting")
+
+if console_report then
+  log"Overriding configured reporters, reporting to console only"
+  conf.report = {{ type = "console" }}
+end
 
 for _, r in ipairs(reports) do
   log("Report: ", r.short)

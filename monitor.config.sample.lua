@@ -1,20 +1,21 @@
 
 return {
-  -- This is a list of hosts that we will try to contact in HTTP(S) in batch mode.
-  -- If all of them fail, the script stops and does nothing.
+  -- This is a list of websites that we will try to contact in HTTP(S) in batch mode.
+  -- If less than two of the websites do respond, the monitor script won’t execute.
   -- This list can be empty, in this case the script will always run the tests.
   test_connection_with_hosts = {
-    "google.com", "free.fr", "facebook.com", "microsoft.com",
+    "http://google.com", "http://free.fr", "https://facebook.com", "https://microsoft.com",
   },
   states_filename = nil, -- use default ~/.local/monitor.lua.state
   remind_period = nil, -- when a test consistently fails, remind the failure after this period in seconds (default 8 hours)
   monitor = {
     -- This is a connect test. The script will connect to the specified host:port
     -- It will then send the content of the `send` entry if not empty
-    -- and read a line frome the socket and match the regex in `match_response`
+    -- and read a line from the socket and match the regex in `match_response`
     -- against it.
     {
       -- Test that the SSH server is up
+      id = "example.com SSH test" -- optional, generated if missing. IDs must be unique
       type = "connect",
       host = "example.com",
       port = 22,
@@ -34,6 +35,7 @@ return {
       url = "http://example.com/index.html",
       check_status = 200, -- optional
       match_response = 'Welcome to example.com', -- optional
+      consecutive_failures_threshold = 4, -- optional, only report after 4 consecutive failures (default 1)
     },
   },
   -- Once the tests have been run, a number of reports have been created and will
